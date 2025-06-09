@@ -67,7 +67,9 @@ flutter {
 // android/app/build.gradle
 
 dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
     def work_version = "2.9.0"
     implementation "androidx.work:work-runtime-ktx:$work_version"
-    implementation 'com.google.android.gms:play-services-location:21.2.0' // For getting location in the background worker
+    implementation 'com.google.android.gms:play-services-location:21.2.0'    
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3'
 }
