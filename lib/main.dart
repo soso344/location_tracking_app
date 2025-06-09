@@ -4,9 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get_navigation/get_navigation.dart';
 import 'package:location/location.dart' as l;
 import 'package:permission_handler/permission_handler.dart';
-import 'package.flutter/services.dart';
-
-// You no longer need the 'http' package here, as the native code handles it.
+import 'package:flutter/services.dart'; // <--- THIS LINE IS NOW CORRECT
 
 void main() => runApp(const MyApp());
 
@@ -32,17 +30,14 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool gpsEnabled = false;
-  // Let's rename this to be more descriptive
   bool backgroundPermissionGranted = false;
   l.Location location = l.Location();
   
-  // This stream is now only for showing live location in the UI, not for sending data.
   StreamSubscription? _locationSubscription;
   List<l.LocationData> locations = [];
   bool isForegroundTrackingActive = false;
 
   // Method Channels
-  static const launcherPlatform = MethodChannel('com.example.location_tracking_app/launcher');
   static const backgroundPlatform = MethodChannel('com.example.location_tracking_app/background');
 
   @override
@@ -77,13 +72,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> requestLocationPermission() async {
-    // We now request "locationAlways" for the background worker
     final status = await Permission.locationAlways.request();
     setState(() {
       backgroundPermissionGranted = status == PermissionStatus.granted;
     });
     if (status.isPermanentlyDenied) {
-        // The user opted to never ask again
         openAppSettings();
     }
   }
@@ -125,7 +118,6 @@ class _HomeScreenState extends State<HomeScreen> {
   // --- Foreground (UI) Location Logic ---
   void startForegroundTracking() {
       if(isForegroundTrackingActive) return;
-      // This subscription is only to display the location in the app's list view.
       _locationSubscription = location.onLocationChanged.listen((l.LocationData currentLocation) {
           setState(() {
               locations.insert(0, currentLocation);
@@ -142,7 +134,6 @@ class _HomeScreenState extends State<HomeScreen> {
       });
   }
 
-  // --- UI ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
