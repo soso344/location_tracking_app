@@ -20,10 +20,8 @@ import java.util.concurrent.TimeUnit
 class MainActivity : FlutterActivity() {
     private val BACKGROUND_CHANNEL = "com.example.location_tracking_app/background"
     private val NOTIFICATION_CHANNEL = "com.example.location_tracking_app/notifications"
-    // NEW Channel for device name and fetching DB data
     private val DATA_CHANNEL = "com.example.location_tracking_app/data"
 
-    // Define constants for SharedPreferences
     companion object {
         const val PREFS_NAME = "DeviceTrackerPrefs"
         const val KEY_DEVICE_NAME = "DeviceName"
@@ -62,13 +60,14 @@ class MainActivity : FlutterActivity() {
             }
         }
 
-        // NEW: Handler for device name and notification data
+        // Handler for data operations
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DATA_CHANNEL).setMethodCallHandler { call, result ->
+            val dataHandler = DataHandler(applicationContext)
+            
             when (call.method) {
                 "getDeviceName" -> {
                     val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    val name = prefs.getString(KEY_DEVICE_NAME, "") ?: ""
-                    result.success(name)
+                    result.success(prefs.getString(KEY_DEVICE_NAME, "") ?: "")
                 }
                 "setDeviceName" -> {
                     val name = call.argument<String>("name")
@@ -77,11 +76,9 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
                 "getStoredNotifications" -> {
-                    // Launch a coroutine to fetch data from the database
                     CoroutineScope(Dispatchers.IO).launch {
                         val db = AppDatabase.getDatabase(applicationContext)
                         val notifications = db.notificationDao().getAll()
-                        // Map entity to a list of maps for Dart
                         val notificationMaps = notifications.map {
                             mapOf(
                                 "id" to it.id,
@@ -91,9 +88,35 @@ class MainActivity : FlutterActivity() {
                                 "timestamp" to it.timestamp
                             )
                         }
-                        // Switch back to the main thread to send the result
                         withContext(Dispatchers.Main) {
                             result.success(notificationMaps)
+                        }
+                    }
+                }
+                // NEW: Trigger an immediate data send
+                "triggerImmediateSend" -> {
+                    CoroutineScope(Dispatchers.IO).launch {
+                        // false -> don't clear notifications on a manual test send
+                        val success = dataHandler.gatherAndSendData(clearNotificationsAfterSend = false)
+                        withContext(Dispatchers.Main) {
+                            if (success) {
+                                result.success(true)
+                            } else {
+                                result.error("SEND_FAILED", "Failed to gather or send data.", null)
+                            }
+                        }
+                    }
+                }
+                // NEW: Export all data to a local file
+                "exportAllData" -> {
+                    CoroutineScope(Dispatchers.IO).launch {
+                        val filePath = dataHandler.exportAllData()
+                        withContext(Dispatchers.Main) {
+                            if (filePath != null) {
+                                result.success(filePath)
+                            } else {
+                                result.error("EXPORT_FAILED", "Failed to export data to file.", null)
+                            }
                         }
                     }
                 }

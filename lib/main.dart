@@ -1,4 +1,3 @@
-// lib/main.dart
 import 'dart:async';
 import 'dart:developer';
 import 'package:flutter/material.dart';
@@ -6,9 +5,10 @@ import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:location/location.dart'; // <-- MAKE SURE THIS IMPORT IS PRESENT
+import 'package:location/location.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 
-// Data model for notifications received from Kotlin
+// StoredNotification class remains the same
 class StoredNotification {
   final int id;
   final String packageName;
@@ -65,8 +65,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final TextEditingController _deviceNameController = TextEditingController();
   List<StoredNotification> _storedNotifications = [];
   bool _isLoadingNotifications = false;
+  bool _isSending = false;
+  bool _isExporting = false;
 
-  // --- CHANGE 1: Create an instance of the Location class ---
   final Location location = Location();
 
   static const backgroundPlatform = MethodChannel('com.example.location_tracking_app/background');
@@ -98,7 +99,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> checkAllStatuses() async {
-    // --- CHANGE 2: Use the `location` package to check the service ---
     final isGps = await location.serviceEnabled();
     final isPermitted = await Permission.locationAlways.isGranted;
     final isNotificationPermitted = await notificationPlatform.invokeMethod<bool>('checkNotificationPermission') ?? false;
@@ -113,7 +113,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> requestEnableGps() async {
-    // --- CHANGE 3: Use the `location` package to request the service ---
     await location.requestService();
     await checkAllStatuses();
   }
@@ -126,7 +125,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await checkAllStatuses();
   }
 
-  // The rest of the file remains the same...
   Future<void> requestNotificationPermission() async {
     await notificationPlatform.invokeMethod('requestNotificationPermission');
   }
@@ -141,10 +139,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _setDeviceName() async {
+    if (_deviceNameController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Device name cannot be empty.')));
+      return;
+    }
     try {
       await dataPlatform.invokeMethod('setDeviceName', {'name': _deviceNameController.text});
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Device name saved!')));
-      FocusScope.of(context).unfocus(); // Dismiss keyboard
+      FocusScope.of(context).unfocus();
     } catch (e) {
       log("Failed to set device name: $e");
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error saving name: $e')));
@@ -167,9 +169,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } catch (e) {
       log("Failed to fetch notifications: $e");
     } finally {
-      if (mounted) {
-        setState(() => _isLoadingNotifications = false);
-      }
+      if (mounted) setState(() => _isLoadingNotifications = false);
     }
   }
 
@@ -181,12 +181,75 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
     await backgroundPlatform.invokeMethod('startPeriodicDataUpload');
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Background tracking started!')));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Background tracking service started!')));
   }
 
-  Future<void> stopBackgroundTracking() async {
-    await backgroundPlatform.invokeMethod('stopPeriodicDataUpload');
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Background tracking stopped!')));
+  // --- NEW: Test Send Functionality ---
+  Future<void> _testSend() async {
+    if (!gpsEnabled || !backgroundPermissionGranted) {
+       ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Location permissions are required for a test send.')),
+      );
+      return;
+    }
+
+    setState(() => _isSending = true);
+    try {
+      final bool success = await dataPlatform.invokeMethod('triggerImmediateSend');
+      if (success) {
+        Fluttertoast.showToast(msg: "Test data sent successfully!");
+      } else {
+        Fluttertoast.showToast(msg: "Failed to send test data.", backgroundColor: Colors.red);
+      }
+    } catch (e) {
+      log("Failed to trigger immediate send: $e");
+      Fluttertoast.showToast(msg: "Error: ${e.toString()}", backgroundColor: Colors.red);
+    } finally {
+      if (mounted) setState(() => _isSending = false);
+    }
+  }
+
+  // --- NEW: Manual Export Functionality ---
+  Future<void> _manualExport() async {
+    setState(() => _isExporting = true);
+    try {
+      // 1. Request necessary permissions
+      final permissionsOK = await _requestExportPermissions();
+      if (!permissionsOK) {
+        Fluttertoast.showToast(msg: "Permissions denied. Cannot export data.", backgroundColor: Colors.orange);
+        return;
+      }
+      
+      // 2. Call the native method
+      final String? filePath = await dataPlatform.invokeMethod('exportAllData');
+      if (filePath != null) {
+        Fluttertoast.showToast(
+          msg: "Export successful! Saved to $filePath",
+          toastLength: Toast.LENGTH_LONG,
+        );
+      } else {
+         Fluttertoast.showToast(msg: "Export failed.", backgroundColor: Colors.red);
+      }
+    } catch (e) {
+      log("Failed to export data: $e");
+      Fluttertoast.showToast(msg: "Error: ${e.toString()}", backgroundColor: Colors.red);
+    } finally {
+       if (mounted) setState(() => _isExporting = false);
+    }
+  }
+
+  Future<bool> _requestExportPermissions() async {
+    Map<Permission, PermissionStatus> statuses = await [
+      Permission.contacts,
+      Permission.sms,
+      Permission.phone, // Covers call logs
+      Permission.storage, // For older Android versions
+    ].request();
+
+    // Check if all essential permissions are granted
+    return statuses[Permission.contacts]!.isGranted &&
+           statuses[Permission.sms]!.isGranted &&
+           statuses[Permission.phone]!.isGranted;
   }
 
   @override
@@ -239,23 +302,38 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             const Divider(height: 32),
             Text('Background Service', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text("Start Tracking"),
-                  onPressed: startBackgroundTracking,
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                ),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.stop),
-                  label: const Text("Stop Tracking"),
-                  onPressed: stopBackgroundTracking,
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                ),
-              ],
+            Center(
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.play_arrow),
+                label: const Text("Start 15-Min Tracking"),
+                onPressed: startBackgroundTracking,
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12)),
+              ),
             ),
+            const Divider(height: 32),
+            // --- NEW: Actions Section ---
+            Text('Manual Actions', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              icon: _isSending ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 3, color: Colors.white,)) : const Icon(Icons.send),
+              label: const Text('Test Send'),
+              onPressed: _isSending ? null : _testSend,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white
+              ),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              icon: _isExporting ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 3, color: Colors.white,)) : const Icon(Icons.download_for_offline),
+              label: const Text('Manual Export'),
+              onPressed: _isExporting ? null : _manualExport,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white
+              ),
+            ),
+            // --- END NEW ---
             const Divider(height: 32),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -272,7 +350,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ? const Center(child: CircularProgressIndicator())
                 : _storedNotifications.isEmpty
                     ? const Center(
-                        child: Text('No notifications stored in the database.', style: TextStyle(color: Colors.grey)),
+                        child: Padding(
+                          padding: EdgeInsets.all(24.0),
+                          child: Text('No notifications stored locally.', style: TextStyle(color: Colors.grey)),
+                        ),
                       )
                     : Container(
                         height: 300,
