@@ -5,8 +5,11 @@ import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:location/location.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+
+// FIX: The 'hide PermissionStatus' directive resolves the namespace conflict
+// between the 'location' and 'permission_handler' packages.
+import 'package:location/location.dart' hide PermissionStatus;
 
 // StoredNotification class remains the same
 class StoredNotification {
@@ -184,7 +187,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Background tracking service started!')));
   }
 
-  // --- NEW: Test Send Functionality ---
   Future<void> _testSend() async {
     if (!gpsEnabled || !backgroundPermissionGranted) {
        ScaffoldMessenger.of(context).showSnackBar(
@@ -209,7 +211,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  // --- NEW: Manual Export Functionality ---
   Future<void> _manualExport() async {
     setState(() => _isExporting = true);
     try {
@@ -311,7 +312,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ),
             const Divider(height: 32),
-            // --- NEW: Actions Section ---
             Text('Manual Actions', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 16),
             ElevatedButton.icon(
@@ -333,7 +333,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 foregroundColor: Colors.white
               ),
             ),
-            // --- END NEW ---
             const Divider(height: 32),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
