@@ -2,6 +2,7 @@ plugins {
     id "com.android.application"
     id "kotlin-android"
     id "dev.flutter.flutter-gradle-plugin"
+    id 'kotlin-kapt'
 }
 
 def localProperties = new Properties()
@@ -64,12 +65,14 @@ flutter {
     source '../..'
 }
 
-// android/app/build.gradle
-
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
     def work_version = "2.9.0"
     implementation "androidx.work:work-runtime-ktx:$work_version"
     implementation 'com.google.android.gms:play-services-location:21.2.0'    
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3'
+    def room_version = "2.6.1"
+    implementation "androidx.room:room-runtime:$room_version"
+    implementation "androidx.room:room-ktx:$room_version"
+    kapt "androidx.room:room-compiler:$room_version"
 }
