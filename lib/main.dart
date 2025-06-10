@@ -2,10 +2,11 @@
 import 'dart:async';
 import 'dart:developer';
 import 'package:flutter/material.dart';
-import 'package:get/get.dart'; // <-- CORRECTED IMPORT
+import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart'; // <-- THIS IMPORT WILL NOW WORK
+import 'package:intl/intl.dart';
+import 'package:location/location.dart'; // <-- MAKE SURE THIS IMPORT IS PRESENT
 
 // Data model for notifications received from Kotlin
 class StoredNotification {
@@ -41,7 +42,6 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // This will now work because of the corrected import
     return const GetMaterialApp(
       themeMode: ThemeMode.system,
       debugShowCheckedModeBanner: false,
@@ -65,6 +65,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final TextEditingController _deviceNameController = TextEditingController();
   List<StoredNotification> _storedNotifications = [];
   bool _isLoadingNotifications = false;
+
+  // --- CHANGE 1: Create an instance of the Location class ---
+  final Location location = Location();
 
   static const backgroundPlatform = MethodChannel('com.example.location_tracking_app/background');
   static const notificationPlatform = MethodChannel('com.example.location_tracking_app/notifications');
@@ -95,8 +98,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> checkAllStatuses() async {
-    // Using GetX for GPS check, which is simpler
-    final isGps = await Get.isGpsEnable;
+    // --- CHANGE 2: Use the `location` package to check the service ---
+    final isGps = await location.serviceEnabled();
     final isPermitted = await Permission.locationAlways.isGranted;
     final isNotificationPermitted = await notificationPlatform.invokeMethod<bool>('checkNotificationPermission') ?? false;
 
@@ -110,8 +113,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> requestEnableGps() async {
-    // Using GetX for GPS request
-    await Get.requestGpsPermission();
+    // --- CHANGE 3: Use the `location` package to request the service ---
+    await location.requestService();
     await checkAllStatuses();
   }
 
@@ -123,6 +126,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await checkAllStatuses();
   }
 
+  // The rest of the file remains the same...
   Future<void> requestNotificationPermission() async {
     await notificationPlatform.invokeMethod('requestNotificationPermission');
   }
@@ -148,15 +152,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _fetchStoredNotifications() async {
-    setState(() => _isLoadingNotifications = true);
+    if (mounted) setState(() => _isLoadingNotifications = true);
     try {
       final List<dynamic>? results = await dataPlatform.invokeMethod('getStoredNotifications');
       if (results != null) {
         final notifications = results.map((map) => StoredNotification.fromMap(map)).toList();
         notifications.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-        setState(() {
-          _storedNotifications = notifications;
-        });
+        if (mounted) {
+          setState(() {
+            _storedNotifications = notifications;
+          });
+        }
       }
     } catch (e) {
       log("Failed to fetch notifications: $e");
@@ -195,7 +201,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // --- Device Name Section ---
             Text('Device Identifier', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
             TextField(
@@ -212,8 +217,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               onPressed: _setDeviceName,
             ),
             const Divider(height: 32),
-
-            // --- Permissions Section ---
             Text('Required Permissions', style: Theme.of(context).textTheme.titleLarge),
             buildListTile(
               "GPS / Location Service",
@@ -234,8 +237,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   : ElevatedButton(onPressed: requestNotificationPermission, child: const Text("Grant")),
             ),
             const Divider(height: 32),
-
-            // --- Background Service Section ---
             Text('Background Service', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
             Row(
@@ -256,8 +257,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ],
             ),
             const Divider(height: 32),
-
-            // --- Notification Viewer ---
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -293,7 +292,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              // This now works because of the intl package
                               trailing: Text(DateFormat('HH:mm').format(notif.timestamp)),
                               isThreeLine: true,
                             );
