@@ -1,10 +1,38 @@
+// lib/main.dart
 import 'dart:async';
 import 'dart:developer';
 import 'package:flutter/material.dart';
-import 'package:get/get_navigation/get_navigation.dart';
-import 'package:location/location.dart' as l;
+import 'package.get/get_navigation/get_navigation.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+
+// Data model for notifications received from Kotlin
+class StoredNotification {
+  final int id;
+  final String packageName;
+  final String title;
+  final String text;
+  final DateTime timestamp;
+
+  StoredNotification({
+    required this.id,
+    required this.packageName,
+    required this.title,
+    required this.text,
+    required this.timestamp,
+  });
+
+  factory StoredNotification.fromMap(Map<dynamic, dynamic> map) {
+    return StoredNotification(
+      id: map['id'],
+      packageName: map['packageName'] ?? '',
+      title: map['title'] ?? '',
+      text: map['text'] ?? '',
+      timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp']),
+    );
+  }
+}
 
 void main() => runApp(const MyApp());
 
@@ -32,28 +60,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool gpsEnabled = false;
   bool backgroundPermissionGranted = false;
   bool notificationAccessGranted = false;
-  l.Location location = l.Location();
+  
+  final TextEditingController _deviceNameController = TextEditingController();
+  List<StoredNotification> _storedNotifications = [];
+  bool _isLoadingNotifications = false;
 
-  StreamSubscription? _locationSubscription;
-  List<l.LocationData> locations = [];
-  bool isForegroundTrackingActive = false;
-
-  // Method Channels
   static const backgroundPlatform = MethodChannel('com.example.location_tracking_app/background');
   static const notificationPlatform = MethodChannel('com.example.location_tracking_app/notifications');
-  static const launcherPlatform = MethodChannel('com.example.location_tracking_app/launcher');
+  static const dataPlatform = MethodChannel('com.example.location_tracking_app/data');
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     checkAllStatuses();
+    _getDeviceName();
+    _fetchStoredNotifications();
   }
 
   @override
   void dispose() {
-    _locationSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    _deviceNameController.dispose();
     super.dispose();
   }
 
@@ -66,38 +94,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> checkAllStatuses() async {
-    await checkLocationStatus();
-    await checkNotificationStatus();
-    // No need to check icon status, as it's a one-way action
-  }
-
-  Future<void> checkLocationStatus() async {
-    final isGps = await location.serviceEnabled();
+    // Check Location Permission
+    final isGps = await Get.isGpsEnable;
     final isPermitted = await Permission.locationAlways.isGranted;
-    setState(() {
-      gpsEnabled = isGps;
-      backgroundPermissionGranted = isPermitted;
-    });
-  }
+    // Check Notification Permission
+    final isNotificationPermitted = await notificationPlatform.invokeMethod<bool>('checkNotificationPermission') ?? false;
 
-  Future<void> checkNotificationStatus() async {
-    try {
-      final bool isGranted = await notificationPlatform.invokeMethod('checkNotificationPermission');
-      if (mounted) {
-        setState(() {
-          notificationAccessGranted = isGranted;
-        });
-      }
-    } on PlatformException catch (e) {
-      log("Failed to check notification permission: ${e.message}");
+    if (mounted) {
+      setState(() {
+        gpsEnabled = isGps;
+        backgroundPermissionGranted = isPermitted;
+        notificationAccessGranted = isNotificationPermitted;
+      });
     }
   }
 
   Future<void> requestEnableGps() async {
-    if (!gpsEnabled) {
-      bool isGpsActive = await location.requestService();
-      if (mounted) setState(() => gpsEnabled = isGpsActive);
-    }
+    await Get.requestGpsPermission();
+    await checkAllStatuses();
   }
 
   Future<void> requestLocationPermission() async {
@@ -105,216 +119,184 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (status.isPermanentlyDenied) {
       openAppSettings();
     }
-    await checkLocationStatus();
+    await checkAllStatuses();
   }
 
   Future<void> requestNotificationPermission() async {
+    await notificationPlatform.invokeMethod('requestNotificationPermission');
+  }
+
+  Future<void> _getDeviceName() async {
     try {
-      await notificationPlatform.invokeMethod('requestNotificationPermission');
-    } on PlatformException catch (e) {
-      log("Failed to open notification settings: ${e.message}");
+      final String name = await dataPlatform.invokeMethod('getDeviceName');
+      _deviceNameController.text = name;
+    } catch (e) {
+      log("Failed to get device name: $e");
+    }
+  }
+
+  Future<void> _setDeviceName() async {
+    try {
+      await dataPlatform.invokeMethod('setDeviceName', {'name': _deviceNameController.text});
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Device name saved!')));
+      FocusScope.of(context).unfocus(); // Dismiss keyboard
+    } catch (e) {
+      log("Failed to set device name: $e");
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error saving name: $e')));
+    }
+  }
+
+  Future<void> _fetchStoredNotifications() async {
+    setState(() => _isLoadingNotifications = true);
+    try {
+      final List<dynamic>? results = await dataPlatform.invokeMethod('getStoredNotifications');
+      if (results != null) {
+        final notifications = results.map((map) => StoredNotification.fromMap(map)).toList();
+        // Sort by newest first for display
+        notifications.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        setState(() {
+          _storedNotifications = notifications;
+        });
+      }
+    } catch (e) {
+      log("Failed to fetch notifications: $e");
+    } finally {
+      setState(() => _isLoadingNotifications = false);
     }
   }
 
   Future<void> startBackgroundTracking() async {
     if (!gpsEnabled || !backgroundPermissionGranted || !notificationAccessGranted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enable GPS, grant "Allow all the time" location, and grant Notification Access.')),
+        const SnackBar(content: Text('Please enable all permissions before starting.')),
       );
       return;
     }
-    try {
-      await backgroundPlatform.invokeMethod('startPeriodicDataUpload');
-      log("Started periodic background data upload.");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Background tracking started! Data will be sent every ~15 minutes.')),
-      );
-    } on PlatformException catch (e) {
-      log("Failed to start background tracking: ${e.message}");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: ${e.message}')),
-      );
-    }
+    await backgroundPlatform.invokeMethod('startPeriodicDataUpload');
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Background tracking started!')));
   }
 
   Future<void> stopBackgroundTracking() async {
-    try {
-      await backgroundPlatform.invokeMethod('stopPeriodicDataUpload');
-      log("Stopped periodic background data upload.");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Background tracking stopped!')),
-      );
-    } on PlatformException catch (e) {
-      log("Failed to stop background tracking: ${e.message}");
-    }
-  }
-
-  void startForegroundTracking() {
-    if (isForegroundTrackingActive) return;
-    _locationSubscription = location.onLocationChanged.listen((l.LocationData currentLocation) {
-      setState(() {
-        locations.insert(0, currentLocation);
-      });
-    });
-    setState(() => isForegroundTrackingActive = true);
-  }
-
-  void stopForegroundTracking() {
-    _locationSubscription?.cancel();
-    setState(() {
-      isForegroundTrackingActive = false;
-      locations.clear();
-    });
-  }
-
-  Future<void> _hideIcon() async {
-    final bool? confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Hide App Icon?'),
-        content: const Text(
-          'This will remove the app icon from your launcher.\n\nYou can only open the app again by clicking the link:\ndevicetracker://open\n\nAre you sure you want to continue?',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Hide Icon', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      try {
-        await launcherPlatform.invokeMethod('hideLauncherIcon');
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('App icon will be hidden.')),
-        );
-      } on PlatformException catch (e) {
-        log('Failed to hide icon: ${e.message}');
-      }
-    }
+    await backgroundPlatform.invokeMethod('stopPeriodicDataUpload');
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Background tracking stopped!')));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Device Tracker'),
+        title: const Text('Device Tracker Settings'),
         centerTitle: true,
       ),
-      body: SingleChildScrollView( // Use SingleChildScrollView to prevent overflow
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // --- Device Name Section ---
+            Text('Device Identifier', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _deviceNameController,
+              decoration: const InputDecoration(
+                labelText: 'Enter a name for this device',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.save),
+              label: const Text('Save Name'),
+              onPressed: _setDeviceName,
+            ),
+            const Divider(height: 32),
+
+            // --- Permissions Section ---
+            Text('Required Permissions', style: Theme.of(context).textTheme.titleLarge),
             buildListTile(
-              "GPS",
+              "GPS / Location Service",
               gpsEnabled
                   ? const Text("Enabled", style: TextStyle(color: Colors.green))
-                  : ElevatedButton(onPressed: requestEnableGps, child: const Text("Enable GPS")),
+                  : ElevatedButton(onPressed: requestEnableGps, child: const Text("Enable")),
             ),
             buildListTile(
               "Background Location",
               backgroundPermissionGranted
                   ? const Text("Granted", style: TextStyle(color: Colors.green))
-                  : ElevatedButton(onPressed: requestLocationPermission, child: const Text("Grant Permission")),
+                  : ElevatedButton(onPressed: requestLocationPermission, child: const Text("Grant")),
             ),
             buildListTile(
               "Notification Access",
               notificationAccessGranted
                   ? const Text("Granted", style: TextStyle(color: Colors.green))
-                  : ElevatedButton(onPressed: requestNotificationPermission, child: const Text("Grant Access")),
+                  : ElevatedButton(onPressed: requestNotificationPermission, child: const Text("Grant")),
             ),
-            const Divider(),
-            const Padding(
-              padding: EdgeInsets.all(8.0),
-              child: Text(
-                "This sends data every ~15 mins, even if the app is closed. This uses the device's battery.",
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ),
+            const Divider(height: 32),
+
+            // --- Background Service Section ---
+            Text('Background Service', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 ElevatedButton.icon(
                   icon: const Icon(Icons.play_arrow),
-                  label: const Text("Start Background Tracking"),
+                  label: const Text("Start Tracking"),
                   onPressed: startBackgroundTracking,
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
                 ),
                 ElevatedButton.icon(
                   icon: const Icon(Icons.stop),
-                  label: const Text("Stop"),
+                  label: const Text("Stop Tracking"),
                   onPressed: stopBackgroundTracking,
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
                 ),
               ],
             ),
-            const Divider(),
-            ListTile(
-              title: const Text("Show Live Location in App"),
-              trailing: Switch(
-                value: isForegroundTrackingActive,
-                onChanged: (val) {
-                  if (val) {
-                    startForegroundTracking();
-                  } else {
-                    stopForegroundTracking();
-                  }
-                },
-              ),
-            ),
-            if (isForegroundTrackingActive) // Only show the list if tracking is active
-              SizedBox(
-                height: 150, // Give it a fixed height
-                child: ListView.builder(
-                  itemCount: locations.length,
-                  itemBuilder: (context, index) {
-                    return ListTile(
-                      dense: true,
-                      title: Text("${locations[index].latitude?.toStringAsFixed(5)}, ${locations[index].longitude?.toStringAsFixed(5)}"),
-                      subtitle: Text(DateTime.fromMillisecondsSinceEpoch(locations[index].time!.toInt()).toIso8601String()),
-                    );
-                  },
+            const Divider(height: 32),
+
+            // --- Notification Viewer ---
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Stored Notifications', style: Theme.of(context).textTheme.titleLarge),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: _fetchStoredNotifications,
                 ),
-              ),
-            const Divider(height: 30),
-            // --- ADVANCED/DANGER ZONE SECTION ---
-            Card(
-              color: Colors.red.shade50,
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Advanced Settings',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Colors.red.shade800),
-                    ),
-                    const SizedBox(height: 10),
-                    const Text('To open the app after hiding it, click or type this link in a browser or notes app:'),
-                    const SizedBox(height: 5),
-                    SelectableText(
-                      'devicetracker://open',
-                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue.shade700),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 15),
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.visibility_off),
-                      label: const Text("Hide App Icon from Launcher"),
-                      onPressed: _hideIcon,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red.shade700,
-                        foregroundColor: Colors.white,
+              ],
+            ),
+            const SizedBox(height: 8),
+            _isLoadingNotifications
+                ? const Center(child: CircularProgressIndicator())
+                : _storedNotifications.isEmpty
+                    ? const Center(
+                        child: Text('No notifications stored in the database.', style: TextStyle(color: Colors.grey)),
+                      )
+                    : Container(
+                        height: 300,
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: ListView.builder(
+                          itemCount: _storedNotifications.length,
+                          itemBuilder: (context, index) {
+                            final notif = _storedNotifications[index];
+                            return ListTile(
+                              dense: true,
+                              title: Text(notif.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                              subtitle: Text(
+                                "${notif.packageName}\n${notif.text}",
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing: Text(DateFormat('HH:mm').format(notif.timestamp)),
+                              isThreeLine: true,
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
           ],
         ),
       ),
@@ -323,8 +305,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   ListTile buildListTile(String title, Widget? trailing) {
     return ListTile(
-      dense: true,
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+      contentPadding: EdgeInsets.zero,
+      title: Text(title),
       trailing: trailing,
     );
   }
