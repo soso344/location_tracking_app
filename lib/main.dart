@@ -2,10 +2,10 @@
 import 'dart:async';
 import 'dart:developer';
 import 'package:flutter/material.dart';
-import 'package.get/get_navigation/get_navigation.dart';
+import 'package:get/get.dart'; // <-- CORRECTED IMPORT
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart'; // <-- THIS IMPORT WILL NOW WORK
 
 // Data model for notifications received from Kotlin
 class StoredNotification {
@@ -41,6 +41,7 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // This will now work because of the corrected import
     return const GetMaterialApp(
       themeMode: ThemeMode.system,
       debugShowCheckedModeBanner: false,
@@ -60,7 +61,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool gpsEnabled = false;
   bool backgroundPermissionGranted = false;
   bool notificationAccessGranted = false;
-  
+
   final TextEditingController _deviceNameController = TextEditingController();
   List<StoredNotification> _storedNotifications = [];
   bool _isLoadingNotifications = false;
@@ -94,10 +95,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> checkAllStatuses() async {
-    // Check Location Permission
+    // Using GetX for GPS check, which is simpler
     final isGps = await Get.isGpsEnable;
     final isPermitted = await Permission.locationAlways.isGranted;
-    // Check Notification Permission
     final isNotificationPermitted = await notificationPlatform.invokeMethod<bool>('checkNotificationPermission') ?? false;
 
     if (mounted) {
@@ -110,6 +110,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> requestEnableGps() async {
+    // Using GetX for GPS request
     await Get.requestGpsPermission();
     await checkAllStatuses();
   }
@@ -152,7 +153,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final List<dynamic>? results = await dataPlatform.invokeMethod('getStoredNotifications');
       if (results != null) {
         final notifications = results.map((map) => StoredNotification.fromMap(map)).toList();
-        // Sort by newest first for display
         notifications.sort((a, b) => b.timestamp.compareTo(a.timestamp));
         setState(() {
           _storedNotifications = notifications;
@@ -161,7 +161,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } catch (e) {
       log("Failed to fetch notifications: $e");
     } finally {
-      setState(() => _isLoadingNotifications = false);
+      if (mounted) {
+        setState(() => _isLoadingNotifications = false);
+      }
     }
   }
 
@@ -291,6 +293,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                               ),
+                              // This now works because of the intl package
                               trailing: Text(DateFormat('HH:mm').format(notif.timestamp)),
                               isThreeLine: true,
                             );
